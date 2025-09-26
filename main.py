@@ -23,6 +23,35 @@ DIRS: List[Tuple[int,int,int]] = [
 SIZE = 4
 EMPTY = 0
 
+def top_z(board: Board, x: int, y: int) -> int:
+    """(x,y)列の現在の積み上がり高さ(=次に置かれるz)を返す。満杯なら -1。"""
+    for z in range(SIZE):
+        if board[z][y][x] == EMPTY:
+            return z
+    return -1
+
+def is_playable(board: Board, x: int, y: int, z: int) -> bool:
+    """指定セル(x,y,z)に次の一手で“ちょうど落ちる”ならTrue。"""
+    tz = top_z(board, x, y)
+    return tz == z  # その列の次に埋まる場所がここ
+
+def find_block_horizontal(board: Board, me: int) -> Optional[Tuple[int, int]]:
+    """
+    横一列(x方向)で、相手が3個+空1個の“即勝ち筋”があれば
+    その空マスに今すぐ落とせる(x,y)を返す。なければNone。
+    """
+    opp = 2 if me == 1 else 1
+    for z in range(SIZE):
+        for y in range(SIZE):
+            # この行の4セル (x=0..3, 固定y, 固定z)
+            line = [board[z][y][x] for x in range(SIZE)]
+            if line.count(opp) == 3 and line.count(EMPTY) == 1:
+                x_empty = line.index(EMPTY)
+                # その空セルに“今置いてそのzに落ちる”かを確認
+                if is_playable(board, x_empty, y, z):
+                    return (x_empty, y)
+    return None
+
 def in_bounds(x:int,y:int,z:int)->bool:
     return 0 <= x < SIZE and 0 <= y < SIZE and 0 <= z < SIZE
 
@@ -173,6 +202,10 @@ class MyAI(Alg3D):
         win_xy = find_immediate_win(board, player)
         if win_xy is not None:
             return win_xy
+        # 1) まずは相手の“横即勝ち”をブロック
+        m = find_block_horizontal(board, player)
+        if m is not None:
+            return m
 
         # 2) 相手の即勝ちブロック
         opp = 3 - player
