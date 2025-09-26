@@ -10,143 +10,188 @@ from framework import Alg3D, Board # 本番用
 #         last_move: Tuple[int, int, int] # 直前に置かれた場所(x, y, z)
 #     ) -> Tuple[int, int]:
 
-DIRS = [
-    (1,0,0),(0,1,0),(0,0,1),           # x, y, z
-    (1,1,0),(1,-1,0),                  # xy 面の斜め
-    (1,0,1),(1,0,-1),                  # xz 面の斜め
-    (0,1,1),(0,1,-1),                  # yz 面の斜め
-    (1,1,1),(1,1,-1),(1,-1,1),(1,-1,-1)# 空間対角
+
+# 4x4x4 のユニーク方向 13種（正反対は同じ扱いにまとめる）
+DIRS: List[Tuple[int,int,int]] = [
+    (1,0,0), (0,1,0), (0,0,1),                 # x, y, z
+    (1,1,0), (1,-1,0),                         # xy
+    (1,0,1), (1,0,-1),                         # xz
+    (0,1,1), (0,1,-1),                         # yz
+    (1,1,1), (1,1,-1), (1,-1,1), (1,-1,-1),    # 立体対角
 ]
+
+SIZE = 4
+EMPTY = 0
+
+def in_bounds(x:int,y:int,z:int)->bool:
+    return 0 <= x < SIZE and 0 <= y < SIZE and 0 <= z < SIZE
+
+def next_z(board: Board, x:int, y:int) -> Optional[int]:
+    for z in range(SIZE):
+        if board[z][y][x] == EMPTY:
+            return z
+    return None
+
+def check_win_after(board: Board, x:int, y:int, z:int, player:int) -> bool:
+    """(x,y,z) に player が置いた直後に4連か？"""
+    for dx,dy,dz in DIRS:
+        cnt = 1
+        # 正方向
+        nx, ny, nz = x+dx, y+dy, z+dz
+        while in_bounds(nx,ny,nz) and board[nz][ny][nx] == player:
+            cnt += 1; nx += dx; ny += dy; nz += dz
+        # 逆方向
+        nx, ny, nz = x-dx, y-dy, z-dz
+        while in_bounds(nx,ny,nz) and board[nz][ny][nx] == player:
+            cnt += 1; nx -= dx; ny -= dy; nz -= dz
+        if cnt >= 4:
+            return True
+    return False
+
+def list_moves(board: Board) -> List[Tuple[int,int,int]]:
+    """(x,y,z)（zは落下後）で返す"""
+    res = []
+    for y in range(SIZE):
+        for x in range(SIZE):
+            z = next_z(board, x, y)
+            if z is not None:
+                res.append((x,y,z))
+    return res
+
+def copy_board(board: Board) -> Board:
+    return [ [ row[:] for row in plane ] for plane in board ]
+
+def place(board: Board, x:int,y:int,z:int, player:int) -> None:
+    board[z][y][x] = player
+
+def find_immediate_win(board: Board, player:int) -> Optional[Tuple[int,int]]:
+    for x,y,z in list_moves(board):
+        if check_win_after(board, x,y,z, player):
+            return (x,y)
+    return None
+
+def gives_opp_immediate_win(board: Board, move_xy:Tuple[int,int], me:int) -> bool:
+    """自分が move_xy を打った直後に、相手に即勝ち手が生まれるか？"""
+    opp = 3 - me
+    x,y = move_xy
+    z = next_z(board, x, y)
+    if z is None:  # そもそも置けない
+        return True
+    b2 = copy_board(board)
+    place(b2, x,y,z, me)
+    # 相手の即勝ち探索
+    for ox,oy,oz in list_moves(b2):
+        if check_win_after(b2, ox,oy,oz, opp):
+            return True
+    return False
+
+def line_potential_score(board: Board, x:int,y:int,z:int, me:int) -> int:
+    """簡易評価: 自分のライン伸長 + フォーク気味（3並び未満も加点） - 相手に与える利"""
+    opp = 3 - me
+    score = 0
+    # 置いたと仮定
+    b2 = copy_board(board)
+    place(b2, x,y,z, me)
+
+    # ライン評価（自分のみ・相手石が混ざるラインは無効）
+    for dx,dy,dz in DIRS:
+        stones_me = 1  # 今置いた1を含む
+        stones_opp = 0
+        # 集計（両方向）
+        for sign in (1,-1):
+            nx,ny,nz = x+dx*sign, y+dy*sign, z+dz*sign
+            while in_bounds(nx,ny,nz):
+                v = b2[nz][ny][nx]
+                if v == me:
+                    stones_me += 1
+                elif v == opp:
+                    stones_opp += 1
+                    break
+                nx += dx*sign; ny += dy*sign; nz += dz*sign
+        if stones_opp == 0:
+            # 自分専有ライン：個数に応じて重み
+            if stones_me >= 3:  # 3並びは強い
+                score += 5
+            elif stones_me == 2:
+                score += 2
+            else:
+                score += 1
+
+    # 中央寄りボーナス（1.5,1.5 に近いほど加点）
+    cx, cy = 1.5, 1.5
+    dist = abs(x - cx) + abs(y - cy)
+    score += int(4 - dist)  # だいたい 1〜4 程度
+
+    # “高さzを揃えやすい横ライン”の監視（同一zでの x/y ライン）
+    # 水平(x) と縦(y) は少し加点
+    if z is not None:
+        # 横
+        me_on_row = sum(1 for xx in range(SIZE) if b2[z][y][xx] == me)
+        opp_on_row = sum(1 for xx in range(SIZE) if b2[z][y][xx] == opp)
+        if opp_on_row == 0 and me_on_row >= 2:
+            score += 2
+        # 縦
+        me_on_col = sum(1 for yy in range(SIZE) if b2[z][yy][x] == me)
+        opp_on_col = sum(1 for yy in range(SIZE) if b2[z][yy][x] == opp)
+        if opp_on_col == 0 and me_on_col >= 2:
+            score += 2
+
+    return score
 
 class MyAI(Alg3D):
     def get_move(
-        self, board: List[List[List[int]]], player: int, last_move: Tuple[int,int,int]
-    ) -> Tuple[int,int]:
-        opp = 2 if player == 1 else 1
+        self,
+        board: Board,
+        player: int,
+        last_move: Tuple[int, int, int]
+    ) -> Tuple[int, int]:
 
-        # 1) 自分が今すぐ勝てるならそこ
-        m = self.find_winning_move(board, player)
-        if m: return m
+        # 1) 自分の即勝ち
+        win_xy = find_immediate_win(board, player)
+        if win_xy is not None:
+            return win_xy
 
-        # 2) 相手が今すぐ勝てる手をブロック
-        m = self.find_winning_move(board, opp)
-        if m: return m
+        # 2) 相手の即勝ちブロック
+        opp = 3 - player
+        opp_win_xy = find_immediate_win(board, opp)
+        if opp_win_xy is not None:
+            return opp_win_xy
 
-        # 3) 中央優先（満杯でない列のみ）
-        for (x,y) in [(1,1),(2,1),(1,2),(2,2)]:
-            if self.next_z(board, x, y) is not None:
-                return (x,y)
+        # 3) 候補列挙
+        cand: List[Tuple[int,int,int]] = list_moves(board)
+        if not cand:
+            # 置けないことは基本ないが安全策
+            return (0,0)
 
-        # 4) その他の合法手
-        for y in range(4):
-            for x in range(4):
-                if self.next_z(board, x, y) is not None:
-                    return (x,y)
+        # 3.5) 同じ柱への連打は原則避ける（例外：上の即勝/即ブロック）
+        avoid_xy = (last_move[0], last_move[1]) if last_move is not None else None
+        filtered: List[Tuple[int,int,int]] = []
+        for x,y,z in cand:
+            if avoid_xy is not None and (x,y) == avoid_xy:
+                continue
+            filtered.append((x,y,z))
+        if not filtered:
+            filtered = cand[:]  # すべて避けると空になる場合は許容
 
-        return (0,0)  # 全埋まり保険
+        # 4) 「相手の即勝を与える手」を除外
+        safe: List[Tuple[int,int,int]] = []
+        for x,y,z in filtered:
+            if not gives_opp_immediate_win(board, (x,y), player):
+                safe.append((x,y,z))
+        if not safe:
+            safe = filtered[:]  # どうしても危険しかないときは許容
 
-    # --- helpers ---
-    def next_z(self, board, x, y) -> Optional[int]:
-        for z in range(4):
-            if board[z][y][x] == 0:
-                return z
-        return None
+        # 5) 簡易スコアで選ぶ
+        best = None
+        best_score = -10**9
+        for x,y,z in safe:
+            s = line_potential_score(board, x,y,z, player)
+            if s > best_score:
+                best_score = s
+                best = (x,y)
+        if best is not None:
+            return best
 
-    def inb(self, x,y,z) -> bool:
-        return 0 <= x < 4 and 0 <= y < 4 and 0 <= z < 4
-
-    def line_count(self, board, x,y,z, dx,dy,dz, player) -> int:
-        """(x,y,z) を含む直線で連なっている個数を数える（両方向）。"""
-        cnt = 1
-        # 正方向
-        nx,ny,nz = x+dx, y+dy, z+dz
-        while self.inb(nx,ny,nz) and board[nz][ny][nx] == player:
-            cnt += 1
-            nx += dx; ny += dy; nz += dz
-        # 逆方向
-        nx,ny,nz = x-dx, y-dy, z-dz
-        while self.inb(nx,ny,nz) and board[nz][ny][nx] == player:
-            cnt += 1
-            nx -= dx; ny -= dy; nz -= dz
-        return cnt
-
-    def check_win(self, board, x,y,z, player) -> bool:
-        for dx,dy,dz in DIRS:
-            if self.line_count(board, x,y,z, dx,dy,dz, player) >= 4:
-                return True
-        return False
-
-    def find_winning_move(self, board, player) -> Optional[Tuple[int,int]]:
-        """重力を考慮して next_z に仮置き→4連完成する列を探す。"""
-        for y in range(4):
-            for x in range(4):
-                z = self.next_z(board, x, y)
-                if z is None:
-                    continue
-                board[z][y][x] = player
-                win = self.check_win(board, x,y,z, player)
-                board[z][y][x] = 0
-                if win:
-                    return (x,y)
-        return None
-
-
-# class MyAI(Alg3D):
-#     def get_move(self, board: Board, player: int, last_move: Tuple[int,int,int]) -> Tuple[int,int]:
-#         opponent = 2 if player == 1 else 1
-
-#         # 1. 勝ち手を探す
-#         move = self.find_winning_move(board, player)
-#         if move:
-#             return move
-
-#         # 2. ブロック
-#         move = self.find_winning_move(board, opponent)
-#         if move:
-#             return move
-
-#         # 3. 中央優先
-#         for (x,y) in [(1,1),(2,1),(1,2),(2,2)]:
-#             if self.can_place(board, x, y):
-#                 return (x,y)
-
-#         # 4. フォールバック
-#         for y in range(4):
-#             for x in range(4):
-#                 if self.can_place(board, x, y):
-#                     return (x,y)
-#         return (0,0)  # 万一の保険
-
-#     def can_place(self, board: Board, x: int, y: int) -> bool:
-#         for z in range(4):
-#             if board[z][y][x] == 0:
-#                 return True
-#         return False
-
-#     def find_winning_move(self, board: Board, player: int) -> Optional[Tuple[int,int]]:
-#         # 各 (x,y) 列について「仮に置いたら4目が完成するか」を判定
-#         for y in range(4):
-#             for x in range(4):
-#                 z = self.next_z(board, x, y)
-#                 if z is None:
-#                     continue
-#                 # 仮に置いて勝てるか？
-#                 board[z][y][x] = player
-#                 if self.check_win(board, x, y, z, player):
-#                     board[z][y][x] = 0  # 戻す
-#                     return (x,y)
-#                 board[z][y][x] = 0
-#         return None
-
-#     def next_z(self, board: Board, x: int, y: int) -> Optional[int]:
-#         for z in range(4):
-#             if board[z][y][x] == 0:
-#                 return z
-#         return None
-
-#     def check_win(self, board: Board, x: int, y: int, z: int, player: int) -> bool:
-#         # ★ここが肝心： (x,y,z) を含む全方向の4目を確認する関数
-#         # 横・縦・高さ・斜めなど全部を網羅する必要あり
-#         # 今は未実装（骨組みだけ）
-#         return False
-
+        # フォールバック
+        x,y,_ = safe[0]
+        return (x,y)
