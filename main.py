@@ -22,8 +22,7 @@ from framework import Alg3D, Board # 本番用
 #                     return (x, y)
 #         # すべて埋まっていた時の保険
 #         return (0, 0)
-from typing import List, Tuple
-from local_driver import Alg3D, Board
+
 
 # --- 勝ち筋生成（4x4x4 の全ライン） ---
 def gen_lines():
