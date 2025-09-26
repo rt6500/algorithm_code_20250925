@@ -23,19 +23,14 @@
 #         # すべて埋まっていた時の保険
 #         return (0, 0)
 
-# === main.py (置き換え用) ===
+# === main.py (両対応版) ===
 from typing import List, Tuple
 
-# 両環境対応: framework が無ければ local_driver の抽象だけ拝借
-try:
-    from framework import Alg3D, Board  # 本番
-except Exception:
-    from local_driver import Alg3D, Board  # ローカル
-
+Board = List[List[List[int]]]
 Idx = range(4)
 
 # --- 勝ちライン生成 ---
-def gen_lines():
+def _gen_lines():
     L = []
     for z in Idx:
         for y in Idx: L.append([(z,y,x) for x in Idx])  # x方向
@@ -43,72 +38,72 @@ def gen_lines():
         for x in Idx: L.append([(z,y,x) for y in Idx])  # y方向
     for y in Idx:
         for x in Idx: L.append([(z,y,x) for z in Idx])  # z方向
-    for z in Idx:
+    for z in Idx:  # 各層の2D斜め
         L.append([(z,i,i) for i in Idx])
         L.append([(z,i,3-i) for i in Idx])
-    for x in Idx:
+    for x in Idx:  # y–z 斜め
         L.append([(i,i,x) for i in Idx])
         L.append([(i,3-i,x) for i in Idx])
-    for y in Idx:
+    for y in Idx:  # x–z 斜め
         L.append([(i,y,i) for i in Idx])
         L.append([(i,y,3-i) for i in Idx])
+    # 3D 主対角線
     L.append([(i,i,i) for i in Idx])
     L.append([(i,i,3-i) for i in Idx])
     L.append([(i,3-i,i) for i in Idx])
     L.append([(i,3-i,3-i) for i in Idx])
     return L
 
-LINES = gen_lines()
-CENTERS = {(1,1),(2,1),(1,2),(2,2)}
-CORNERS = {(0,0),(0,3),(3,0),(3,3)}
+_LINES = _gen_lines()
+_CENTERS = {(1,1),(2,1),(1,2),(2,2)}
+_CORNERS = {(0,0),(0,3),(3,0),(3,3)}
 
-def to_mutable(bd: Board) -> list:
-    # tuple でも確実に書き換え可能へ
+def _to_mutable(bd: Board) -> list:
     return [[[bd[z][y][x] for x in Idx] for y in Idx] for z in Idx]
 
-def next_z(board: Board, x:int, y:int):
+def _next_z(board: Board, x:int, y:int):
     for z in Idx:
         if board[z][y][x] == 0:
             return z
-    return None
+    return None  # 満杯列
 
-def simulate(board: Board, x:int, y:int, who:int):
-    z = next_z(board, x, y)
+def _simulate(board: Board, x:int, y:int, who:int):
+    z = _next_z(board, x, y)
     if z is None: return None
-    b2 = to_mutable(board)
+    b2 = _to_mutable(board)
     b2[z][y][x] = who
     return b2
 
-def winner(board: Board) -> int:
-    for line in LINES:
-        vs = [board[z][y][x] for z,y,x in line]
-        if vs[0] != 0 and all(v==vs[0] for v in vs):
+def _winner(board: Board) -> int:
+    for line in _LINES:
+        vs = [board[z][y][x] for (z,y,x) in line]
+        if vs[0] != 0 and vs.count(vs[0]) == 4:
             return vs[0]
     return 0
 
-def threats(board: Board, who:int):
+def _threats(board: Board, who:int):
     T = set()
-    for line in LINES:
-        cells = [(z,y,x) for z,y,x in line]
-        vs = [board[z][y][x] for z,y,x in cells]
+    for line in _LINES:
+        cells = [(z,y,x) for (z,y,x) in line]
+        vs = [board[z][y][x] for (z,y,x) in cells]
         if vs.count(who) == 3 and vs.count(0) == 1:
-            z,y,x = cells[vs.index(0)]
-            if next_z(board, x, y) == z:  # 実際に置ける高さであること
-                T.add((x,y))
+            zz,yy,xx = cells[vs.index(0)]
+            if _next_z(board, xx, yy) == zz:  # 実際に置ける高さ
+                T.add((xx,yy))
     return T
 
-def pos_bonus(x:int, y:int):
-    if (x,y) in CENTERS: return 3
-    if (x,y) in CORNERS: return 2
+def _pos_bonus(x:int, y:int):
+    if (x,y) in _CENTERS: return 3
+    if (x,y) in _CORNERS: return 2
     return 0
 
-def evaluate(board: Board, me:int):
+def _evaluate(board: Board, me:int):
     opp = 2 if me == 1 else 1
     score = 0
-    for line in LINES:
-        vs = [board[z][y][x] for z,y,x in line]
+    for line in _LINES:
+        vs = [board[z][y][x] for (z,y,x) in line]
         mc, oc = vs.count(me), vs.count(opp)
-        if mc and oc:  # 混在は無効
+        if mc and oc:
             continue
         if oc == 0:
             if mc == 3: score += 60
@@ -120,69 +115,63 @@ def evaluate(board: Board, me:int):
             elif oc == 1: score -= 4
     return score
 
-def infer_player(board: Board) -> int:
-    # 盤面から手番を推定（1の数==2の数なら1、そうでなければ2）
+def _infer_player(board: Board) -> int:
     flat = [board[z][y][x] for z in Idx for y in Idx for x in Idx]
     c1, c2 = flat.count(1), flat.count(2)
     return 1 if c1 == c2 else 2
 
-class MyAI(Alg3D):
-    # 両対応: (board) も (board, player, last_move) も受け付ける
-    def get_move(self, *args) -> Tuple[int,int]:
+def _first_legal(board: Board) -> Tuple[int,int]:
+    for y in Idx:
+        for x in Idx:
+            if _next_z(board, x, y) is not None:
+                return (x, y)
+    return (0, 0)
+
+def _choose_move(board: Board, me: int) -> Tuple[int,int]:
+    opp = 2 if me == 1 else 1
+    # 1) 即勝ち
+    for y in Idx:
+        for x in Idx:
+            if _next_z(board,x,y) is None: continue
+            b2 = _simulate(board,x,y,me)
+            if b2 is not None and _winner(b2) == me:
+                return (x,y)
+    # 2) 即ブロック
+    opp_th = _threats(board, opp)
+    if opp_th:
+        return max(opp_th, key=lambda xy: _pos_bonus(*xy))
+    # 候補
+    candidates = [(x,y) for y in Idx for x in Idx if _next_z(board,x,y) is not None]
+    if not candidates:
+        return (0,0)
+    # 3) 直後に相手の即勝ちを生まない手
+    safe = []
+    for (x,y) in candidates:
+        b2 = _simulate(board,x,y,me)
+        if b2 is not None and not _threats(b2, opp):
+            safe.append((x,y))
+    if not safe:
+        safe = candidates
+    # 4) 評価 + 位置ボーナス
+    best = max(safe, key=lambda xy: (_evaluate(_simulate(board,xy[0],xy[1],me), me) + _pos_bonus(*xy)))
+    bx, by = int(best[0]), int(best[1])
+    return (min(max(bx,0),3), min(max(by,0),3))
+
+# === 提出用エクスポート（本番はこれだけ呼ばれる想定） ===
+def get_move(board: Board) -> Tuple[int,int]:
+    try:
+        me = _infer_player(board)
+        x, y = _choose_move(board, me)
+        # 念のため合法保証
+        return (x, y) if _next_z(board, x, y) is not None else _first_legal(board)
+    except Exception:
+        return _first_legal(board)
+
+# === ローカル検証用API（local_driver.py が呼ぶ） ===
+class MyAI:
+    def get_move(self, board: Board, player: int, last_move: Tuple[int,int,int]) -> Tuple[int,int]:
         try:
-            if len(args) == 1:
-                board = args[0]
-                player = infer_player(board)
-                last_move = None  # 本戦では未使用
-            elif len(args) == 3:
-                board, player, last_move = args
-            else:
-                # 想定外でも安全に処理
-                board, player, last_move = args[0], infer_player(args[0]), None
-
-            me, opp = player, (2 if player == 1 else 1)
-
-            # 1) 即勝ち
-            for y in Idx:
-                for x in Idx:
-                    if next_z(board,x,y) is None: continue
-                    b2 = simulate(board,x,y,me)
-                    if b2 is not None and winner(b2) == me:
-                        return (x,y)
-
-            # 2) 即ブロック
-            opp_th = threats(board, opp)
-            if opp_th:
-                return max(opp_th, key=lambda xy: pos_bonus(*xy))
-
-            # 候補
-            candidates = [(x,y) for y in Idx for x in Idx if next_z(board,x,y) is not None]
-            if not candidates:
-                return (0,0)  # 盤詰まり保険
-
-            # 3) 置いた直後に相手の即勝ちが生じない手
-            safe = []
-            for (x,y) in candidates:
-                b2 = simulate(board,x,y,me)
-                if b2 is not None and not threats(b2, opp):
-                    safe.append((x,y))
-            if not safe:
-                safe = candidates
-
-            # 4) 評価 + 位置ボーナス
-            def move_score(xy):
-                x,y = xy
-                b2 = simulate(board,x,y,me)
-                base = evaluate(b2, me) if b2 is not None else -10**9
-                return base + pos_bonus(x,y)
-
-            bx, by = max(safe, key=move_score)
-            return (int(bx), int(by))
-
+            x, y = _choose_move(board, player)
+            return (x, y) if _next_z(board, x, y) is not None else _first_legal(board)
         except Exception:
-            # 例外でも必ず合法手を返す
-            for y in Idx:
-                for x in Idx:
-                    if next_z(board,x,y) is not None:
-                        return (x,y)
-            return (0,0)
+            return _first_legal(board)
