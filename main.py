@@ -64,11 +64,33 @@ def copy_board(board: Board) -> Board:
 def place(board: Board, x:int,y:int,z:int, player:int) -> None:
     board[z][y][x] = player
 
+# 追加：横（同一z面・x方向）専用の勝ち判定
+def check_row_win_after(board: Board, x:int, y:int, z:int, player:int) -> bool:
+    """(x,y,z) に player を仮置きした直後、同一 z の横列で4連か？"""
+    cnt = 1  # 置いた石を含む
+    # ← 方向
+    nx = x - 1
+    while nx >= 0 and board[z][y][nx] == player:
+        cnt += 1
+        nx -= 1
+    # → 方向
+    nx = x + 1
+    while nx < SIZE and board[z][y][nx] == player:
+        cnt += 1
+        nx += 1
+    return cnt >= 4
+
+# 差し替え：即勝ち探索で「横4連」を最優先チェック
 def find_immediate_win(board: Board, player:int) -> Optional[Tuple[int,int]]:
     for x,y,z in list_moves(board):
+        # 横列（同z）で4になるなら即採用
+        if check_row_win_after(board, x,y,z, player):
+            return (x,y)
+        # 横以外のラインでも勝てるならOK（既存の全方向チェック）
         if check_win_after(board, x,y,z, player):
             return (x,y)
     return None
+
 
 def gives_opp_immediate_win(board: Board, move_xy:Tuple[int,int], me:int) -> bool:
     """自分が move_xy を打った直後に、相手に即勝ち手が生まれるか？"""
@@ -137,6 +159,7 @@ def line_potential_score(board: Board, x:int,y:int,z:int, me:int) -> int:
             score += 2
 
     return score
+
 
 class MyAI(Alg3D):
     def get_move(
