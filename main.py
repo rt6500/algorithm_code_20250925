@@ -197,16 +197,14 @@ class MyAI(Alg3D):
         player: int,
         last_move: Tuple[int, int, int]
     ) -> Tuple[int, int]:
-
-        # 1) 自分の即勝ち
-        win_xy = find_immediate_win(board, player)
-        if win_xy is not None:
-            return win_xy
         # 1) まずは相手の“横即勝ち”をブロック
         m = find_block_horizontal(board, player)
         if m is not None:
             return m
-
+        # 1) 自分の即勝ち
+        win_xy = find_immediate_win(board, player)
+        if win_xy is not None:
+            return win_xy
         # 2) 相手の即勝ちブロック
         opp = 3 - player
         opp_win_xy = find_immediate_win(board, opp)
